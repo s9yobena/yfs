@@ -183,3 +183,9 @@ l8-sol:
 .PHONY : clean
 clean : 
 	rm -rf rpc/rpctest rpc/*.o rpc/*.d rpc/librpc.a *.o *.d yfs_client extent_server lock_server lock_tester lock_demo rpctest test-lab-4-b test-lab-4-c
+
+# Emacs Tags
+TAGS:
+	@echo TAGS
+	@find . -regex ".*\.[ch]\(c\)?" -print | etags -
+
