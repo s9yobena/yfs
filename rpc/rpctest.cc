@@ -1,14 +1,27 @@
 // RPC test and pseudo-documentation.
 // generates print statements on failures, but eventually says "rpctest OK"
 
-#include "rpc.h"
 #include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+
+#include <unistd.h>
+#include <ios>
+#include <iostream>
+#include <fstream>
+#include <string>
+
+#include "rpc.h"
+
 #include "jsl_log.h"
 #include "gettime.h"
+
+#define THRES	3000.0
+#ifdef __APPLE__
+#include<mach/mach.h>
+#endif
 
 #define NUM_CL 2
 
@@ -28,6 +41,51 @@ class srv {
 		int handle_slow(const int a, int &r);
 		int handle_bigrep(const int a, std::string &r);
 };
+
+
+void process_mem_usage(double& resident_set)
+{
+#ifdef __linux
+	using std::ios_base;
+	using std::ifstream;
+	using std::string;
+
+	resident_set = 0.0;
+
+	// 'file' stat seems to give the most reliable results
+	ifstream stat_stream("/proc/self/stat",ios_base::in);
+
+	// dummy vars for leading entries in stat that we don't care about
+	string pid, comm, state, ppid, pgrp, session, tty_nr;
+	string tpgid, flags, minflt, cminflt, majflt, cmajflt;
+	string utime, stime, cutime, cstime, priority, nice;
+	string O, itrealvalue, starttime, vsize;
+
+	// the field we want
+	long rss;
+	long page_size_kb;
+
+	stat_stream >> pid >> comm >> state >> ppid >> pgrp >> session >> tty_nr
+	>> tpgid >> flags >> minflt >> cminflt >> majflt >> cmajflt
+	>> utime >> stime >> cutime >> cstime >> priority >> nice
+	>> O >> itrealvalue >> starttime >> vsize >> rss;// don't care about the rest
+
+	stat_stream.close();
+
+	page_size_kb = sysconf(_SC_PAGE_SIZE) / 1024;// in case x86-64 is configured to use 2MB pages
+	resident_set = rss * page_size_kb;
+#elif __APPLE__
+	struct task_basic_info t_info;
+	mach_msg_type_number_t t_info_count = TASK_BASIC_INFO_COUNT;
+
+	assert (KERN_SUCCESS
+			== task_info(mach_task_self(), TASK_BASIC_INFO,
+                         (task_info_t) & t_info, &t_info_count));
+
+	resident_set = t_info.resident_size / 1024.0;
+#endif
+}
+
 
 // a handler. a and b are arguments, r is the result.
 // there can be multiple arguments but only one result.
@@ -162,7 +220,7 @@ client2(void *xx)
 		std::string rep;
 		int ret = clients[which_cl]->call(25, arg, rep);
 		if ((int)rep.size()!=arg) {
-			printf("ask for %d reply got %d ret %d\n", arg, rep.size(), ret);
+			printf("ask for %d reply got %d ret %d\n", arg, (int)rep.size(), ret);
 		}
 		assert((int)rep.size() == arg);
 	}
@@ -182,6 +240,41 @@ client3(void *xx)
 	return 0;
 }
 
+void *
+client4(void *xx)
+{
+	// test garbage collection, view memory consumption.
+	double rss, initial, final;
+
+	process_mem_usage(rss);
+	initial = rss;
+
+    printf(" RAM used: %iMB (initial)", int(rss) / 1024);
+	
+	int which_cl = ((unsigned long) xx ) % NUM_CL;
+	for(int j = 0; j < 5; j++){
+        int interval = 100;
+		for(int i = 0; i < interval; i++){
+			int arg = 250000 + (random() % 2000);
+			std::string rep;
+			int ret = clients[which_cl]->call(25, arg, rep);
+			assert(ret == 0);
+			if ((int)rep.size()!=arg) {
+				printf("repsize wrong %d!=%d\n", (int)rep.size(), arg);
+			}
+			assert((int)rep.size() == arg);
+		}
+		process_mem_usage(rss);
+		final = rss;
+        printf(", %iMB", int(rss) / 1024);
+	}
+    printf(" (final) ...");
+    if (!(final - initial < THRES)) {
+        printf(" difference too large\n");
+    }
+	assert(final - initial < THRES);
+	return 0;
+}
 
 void
 simple_tests(rpcc *c)
@@ -278,6 +371,26 @@ concurrent_test(int nt)
 }
 
 void 
+garbage_collection_test(int nt)
+{
+    // test garbage collection
+	int ret;
+	printf("start garbage_collection_test ...");
+
+	pthread_t th[nt];
+	for(int i = 0; i < nt; i++){
+		ret = pthread_create(&th[i], &attr, client4, (void *) i);
+		assert(ret == 0);
+	}
+
+	for(int i = 0; i < nt; i++){
+		assert(pthread_join(th[i], NULL) == 0);
+	}
+	printf(" OK\n");
+}
+
+
+void 
 lossy_test()
 {
 	int ret;
@@ -305,7 +418,7 @@ lossy_test()
 	for(int i = 0; i < nt; i++){
 		assert(pthread_join(th[i], NULL) == 0);
 	}
-	printf(".. OK\n");
+	printf(" OK\n");
 	assert(setenv("RPC_LOSSY", "0", 1) == 0);
 }
 
@@ -385,7 +498,6 @@ failure_test()
 int
 main(int argc, char *argv[])
 {
-
 	setvbuf(stdout, NULL, _IONBF, 0);
 	setvbuf(stderr, NULL, _IONBF, 0);
 	int debug_level = 0;
@@ -446,7 +558,6 @@ main(int argc, char *argv[])
 		dst.sin_addr.s_addr = inet_addr("127.0.0.1");
 		dst.sin_port = htons(port);
 
-
 		// start the client.  bind it to the server.
 		// starts a thread to listen for replies and hand them to
 		// the correct waiting caller thread. there should probably
@@ -462,6 +573,7 @@ main(int argc, char *argv[])
 		lossy_test();
 		if (isserver) {
 			failure_test();
+            garbage_collection_test(1);
 		}
 
 		printf("rpctest OK\n");
