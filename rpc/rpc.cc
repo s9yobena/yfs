@@ -562,6 +562,34 @@ rpcs::add_reply(unsigned int clt_nonce, unsigned int xid,
 		char *b, int sz)
 {
 	ScopedLock rwl(&reply_window_m_);
+	// add a reply to the corresponding client
+
+	std::list<reply_t>::iterator litr;
+
+	for (litr = reply_window_[clt_nonce].begin();
+	     litr != reply_window_[clt_nonce].end();
+	     litr ++) {
+			
+		if ( (litr->xid == xid)) {
+			litr->cb_present = true;
+			litr->buf = b;
+			litr->sz = sz;
+		}
+	}
+				
+
+	// reply_t _rep(xid);
+	// _rep.buf = b;
+	// _rep.sz = sz;
+	// _rep.cb_present = true;
+
+	// if (reply_window_.count(clt_nonce)>0) {
+	// 	printf("Saving reply with xid = %d \t clnt_nonce = %u \n",xid, clt_nonce);
+	// 	reply_window_[clt_nonce].push_back(_rep);
+	// } else {
+		
+	// 	assert (reply_window_[clt_nonce].size() == 0); // create
+	// }
 }
 
 void
@@ -585,7 +613,86 @@ rpcs::checkduplicate_and_update(unsigned int clt_nonce, unsigned int xid,
 		unsigned int xid_rep, char **b, int *sz)
 {
 	ScopedLock rwl(&reply_window_m_);
+	
+	// check if we already stored the reply
+	// if so, return the previous b and sz
+	// return DONE instead of NEW
+	
+	// printf("Checkduplicate_and_update(clt_nonce: %u, xid: %u, xid_rep: %u) \n", 
+	//        clt_nonce, xid, xid_rep);
 
+	// printf("Printing all saved replyes\n");
+	// std::list<reply_t>::iterator litr;
+	// for (litr = reply_window_[clt_nonce].begin();
+	//      litr != reply_window_[clt_nonce].end();
+	//      litr ++) {
+		
+	// 	printf("clt_nonce= %u, xid= %u, cb_present= %s \n",
+	// 	       clt_nonce,litr->xid, litr->cb_present? "True": "False");
+	// }
+
+	std::list<reply_t>::iterator litr;
+	
+	if (reply_window_[clt_nonce].size()!=0) {
+
+		for (litr = reply_window_[clt_nonce].begin();
+		     litr != reply_window_[clt_nonce].end();
+		     litr ++) {
+		
+			if (litr->xid <= xid_rep) {
+				free (litr->buf);
+				litr = reply_window_[clt_nonce].erase(litr);
+			}
+		}
+	
+
+		
+		// std::list<reply_t>::iterator litr;
+		for (litr = reply_window_[clt_nonce].begin();
+		     litr != reply_window_[clt_nonce].end();
+		     litr ++) {
+			
+			if ( (litr->xid == xid)) {
+				
+				if ( litr->cb_present) {
+
+					// if (xid_rep > litr->xid
+				
+					*b = litr->buf;
+					*sz = litr->sz;
+					// printf("RETURNING DONE \n");
+					// printf("Actual: clt_nonce = %u, xid= %d \n",clt_nonce,xid);
+					// printf("Stored: clt_nonce = %u, xid= %d \n",clt_nonce,litr->xid);
+					// printf("Actual: xid_rep = %u \n",xid_rep);
+				
+					return DONE;
+				} else {
+					
+					return INPROGRESS;
+				}				
+			}
+		}
+	}
+	
+	// this is a new rquest
+	unsigned int oldest_xid ;
+	oldest_xid = reply_window_[clt_nonce].begin()->xid;
+	
+	for (litr = reply_window_[clt_nonce].begin();
+	     litr != reply_window_[clt_nonce].end();
+	     litr ++) {
+		if (litr->xid < oldest_xid)
+			oldest_xid = litr->xid;
+	}
+
+	// if (xid < oldest_xid) {
+	// 	return FORGOTTEN;
+	// }
+
+	
+	reply_t _rep(xid);
+	reply_window_[clt_nonce].push_back(_rep);
+	
 	return NEW;
 }
 

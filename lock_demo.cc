@@ -32,7 +32,7 @@ main(int argc, char *argv[])
 	r = lc->acquire(05);
 	print_lock_state(r,05);
 
-	r = lc->acquire(05);
+	r = lc->release(05);
 	print_lock_state(r,05);
 
 	r = lc->acquire(06);
