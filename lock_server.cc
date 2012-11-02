@@ -119,7 +119,7 @@ lock_server::do_register(lock_protocol::lockid_t lid)
 		}
 		locks_map_aw++;
 	}
-	printf("creating new lock with id %d",lid);
+	printf("creating new lock with id %llu \n",lid);
 	lock_t *_lock = new lock_t(lid);
 	locks_map.insert(std::pair<lock_protocol::lockid_t,lock_t*>(lid,_lock));
 
